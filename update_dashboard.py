@@ -146,7 +146,7 @@ def safe_rating_avg(series):
 def calc_kpis(df_month):
     total_orders = len(df_month)
     if total_orders == 0:
-        return {k: 0 for k in ['total_orders','net_revenue','order_amount','discounts','tax_collected','gross_profit','labor_cost','spare_cost','fuel_cost','net_profit','gross_margin','net_margin','avg_order_value','late_orders','ontime_orders','ontime_pct','sla_breach_pct','avg_rating','avg_tat_hours','foc_orders','actual_orders','foc_pct']}
+        return {k: 0 for k in ['total_orders','net_revenue','order_amount','discounts','tax_collected','gross_profit','labor_cost','spare_cost','fuel_cost','consumable','net_profit','gross_margin','net_margin','avg_order_value','late_orders','ontime_orders','ontime_pct','sla_breach_pct','avg_rating','avg_tat_hours','foc_orders','actual_orders','foc_pct']}
     
     nr = df_month['Net Revenue'].sum()
     gp = df_month['Gross Profit'].sum()
@@ -170,6 +170,8 @@ def calc_kpis(df_month):
         'labor_cost': round(float(df_month['Labor Cost & Travel cost'].sum()), 2),
         'spare_cost': round(float(df_month['Spare Input Price'].sum()), 2),
         'fuel_cost': round(float(df_month['Fuel Cost'].sum()), 2),
+        'consumable': round(float(df_month['Consumable'].sum()), 2),
+        'net_profit': round(float(np_), 2),
         'net_profit': round(float(np_), 2),
         'gross_margin': round(float(gp / nr if nr > 0 else 0), 4),
         'net_margin': round(float(np_ / nr if nr > 0 else 0), 4),
@@ -214,6 +216,23 @@ def calc_date_wise_perf(df_month):
     df_month['Date'] = df_month['Post Job Done Date'].dt.date
     daily = df_month.groupby('Date').agg({
         'Project No.': 'count', 'Net Revenue': 'sum', 'Gross Profit': 'sum',
+        'Labor Cost & Travel cost': 'sum', 'Spare Input Price': 'sum', 'Fuel Cost': 'sum', 'Net Profit': 'sum',
+        'Consumable': 'sum'
+    }).reset_index()
+    daily.columns = ['Date', 'Orders', 'Net_Revenue', 'Gross_Profit', 'Labor_Cost', 'Spare_Cost', 'Fuel_Cost', 'Net_Profit', 'Consumable']
+    daily['Day'] = pd.to_datetime(daily['Date']).dt.day_name()
+    daily['GM_pct'] = (daily['Gross_Profit'] / daily['Net_Revenue']).replace([np.inf, -np.inf], 0).fillna(0) * 100
+    daily['NM_pct'] = (daily['Net_Profit'] / daily['Net_Revenue']).replace([np.inf, -np.inf], 0).fillna(0) * 100
+    records = daily.to_dict('records')
+    for r in records:
+        r['Date'] = str(r['Date'])
+    return records
+    if len(df_month) == 0:
+        return []
+    df_month = df_month.copy()
+    df_month['Date'] = df_month['Post Job Done Date'].dt.date
+    daily = df_month.groupby('Date').agg({
+        'Project No.': 'count', 'Net Revenue': 'sum', 'Gross Profit': 'sum',
         'Labor Cost & Travel cost': 'sum', 'Spare Input Price': 'sum', 'Fuel Cost': 'sum', 'Net Profit': 'sum'
     }).reset_index()
     daily.columns = ['Date', 'Orders', 'Net_Revenue', 'Gross_Profit', 'Labor_Cost', 'Spare_Cost', 'Fuel_Cost', 'Net_Profit']
@@ -226,6 +245,17 @@ def calc_date_wise_perf(df_month):
     return records
 
 def calc_service_pnl(df_month):
+    if len(df_month) == 0:
+        return []
+    sp = df_month.groupby('Service Type').agg({
+        'Project No.': 'count', 'Net Revenue': 'sum', 'Spare Input Price': 'sum',
+        'Labor Cost & Travel cost': 'sum', 'Fuel Cost': 'sum', 'Gross Profit': 'sum', 'Net Profit': 'sum',
+        'Consumable': 'sum'
+    }).reset_index()
+    sp.columns = ['Service_Type', 'Orders', 'Net_Revenue', 'Spare_Cost', 'Labor_Cost', 'Fuel_Cost', 'Gross_Profit', 'Net_Profit', 'Consumable']
+    sp['GM_pct'] = (sp['Gross_Profit'] / sp['Net_Revenue']).replace([np.inf, -np.inf], 0).fillna(0)
+    sp['NM_pct'] = (sp['Net_Profit'] / sp['Net_Revenue']).replace([np.inf, -np.inf], 0).fillna(0)
+    return sp.to_dict('records')
     if len(df_month) == 0:
         return []
     sp = df_month.groupby('Service Type').agg({
@@ -311,7 +341,7 @@ def calc_discount_pnl(df_month):
     ]
 
 def calc_lmtd_mtd(df_all, current_month):
-    months = sorted(df_all['Month'].unique())
+    months = sorted(df_all['Month'].dropna().unique())
     if current_month not in months or months.index(current_month) == 0:
         return []
     
@@ -425,6 +455,10 @@ def generate_insights_actions(df_month, df_all, month):
     return insights, actions
 
 def calc_cohort(df_all):
+    # Drop rows with null Post Job Done Date to avoid NaT errors
+    df_all = df_all.dropna(subset=['Post Job Done Date'])
+    if len(df_all) == 0:
+        return []
     customer_first = df_all.groupby('Customer ID')['Post Job Done Date'].min().reset_index()
     customer_first.columns = ['Customer ID', 'First Order']
     customer_first['Cohort Month'] = customer_first['First Order'].dt.strftime('%m-%Y')
@@ -443,8 +477,14 @@ def calc_cohort(df_all):
             if key not in ('Cohort Month', 'Size') and r[key] is not None and size > 0:
                 r[key] = round(float(r[key]) / size * 100, 1)
     return records
-
 def calc_monthly_trend(df_all):
+    monthly = df_all.groupby('Month').agg({
+        'Project No.': 'count', 'Net Revenue': 'sum', 'Gross Profit': 'sum',
+        'Labor Cost & Travel cost': 'sum', 'Spare Input Price': 'sum', 'Fuel Cost': 'sum', 'Net Profit': 'sum',
+        'Consumable': 'sum'
+    }).reset_index()
+    monthly.columns = ['Month', 'Orders', 'Net_Revenue', 'Gross_Profit', 'Labor_Cost', 'Spare_Cost', 'Fuel_Cost', 'Net_Profit', 'Consumable']
+    return monthly.to_dict('list')
     monthly = df_all.groupby('Month').agg({
         'Project No.': 'count', 'Net Revenue': 'sum', 'Gross Profit': 'sum',
         'Labor Cost & Travel cost': 'sum', 'Spare Input Price': 'sum', 'Fuel Cost': 'sum', 'Net Profit': 'sum'
@@ -461,7 +501,7 @@ def get_filter_options(df):
     }
 
 def generate_all_views(df, service_prices, manpower_costs, fuel_cost):
-    months = sorted(df['Month'].unique())
+    months = sorted(df['Month'].dropna().unique())
     print(f"📅 Found months: {months}")
     views = {}
     filter_options = get_filter_options(df)
@@ -518,7 +558,7 @@ def main():
     
     df = fetch_redash()
     df = apply_formulas(df, service_prices, manpower_costs, fuel_cost)
-    months = sorted(df['Month'].unique())
+    months = sorted(df['Month'].dropna().unique())
     views, filter_options = generate_all_views(df, service_prices, manpower_costs, fuel_cost)
     
     result = {

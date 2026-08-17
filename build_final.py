@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-Build a fully working self-contained Eazzy Dashboard (v3).
-Includes: Date-wise Performance tab, cohort %, working filters, Avg TAT Hours,
-Weekend/Weekday filter, footer by Satendra Baghel.
+Build Eazzy Dashboard index.html from data.js + styles.css.
+Matches user's working version exactly + adds Consumable columns + Export button.
 """
 import json
-import re
 
 # ============================================================
 # STEP 1: LOAD DATA FROM data.js
@@ -13,9 +11,7 @@ import re
 with open('data.js', 'r', encoding='utf-8') as f:
     data_js = f.read()
 
-# Extract JSON from JS
 json_str = data_js.split('const DASHBOARD_DATA = ', 1)[1].rstrip().rstrip(';')
-# Fix NaN values for JSON parsing
 json_str = json_str.replace('NaN', 'null')
 data = json.loads(json_str)
 
@@ -103,6 +99,7 @@ html = '''<!DOCTYPE html>
   <div class="header-top">
     <h1>🏠 EAZZY SERVICES | Executive Dashboard</h1>
     <div class="header-info">
+      <button onclick="exportToExcel()" style="padding:6px 14px;border-radius:6px;border:none;background:#10b981;color:white;font-size:0.85rem;font-weight:600;cursor:pointer;">📥 Export</button>
       <div class="month-slicer">
         <label>📅 Period:</label>
         <select id="monthSelector">
@@ -117,6 +114,10 @@ html = '''<!DOCTYPE html>
 
 <!-- Filter Bar -->
 <div class="filter-bar">
+  <div class="filter-group">
+    <label>🏪 Franchise:</label>
+    <select id="filterFranchise"><option value="">All</option></select>
+  </div>
   <div class="filter-group">
     <label>🗂️ Category:</label>
     <select id="filterCategory"><option value="">All</option></select>
@@ -177,7 +178,7 @@ html = '''<!DOCTYPE html>
     <div class="table-wrap">
       <table id="monthlyTable"><thead><tr>
         <th>Month</th><th class="text-right">Orders</th><th class="text-right">Net Revenue</th>
-        <th class="text-right">Gross Profit</th><th class="text-right">Labor Cost</th>
+        <th class="text-right">Gross Profit</th><th class="text-right">Consumable</th><th class="text-right">Labor Cost</th>
         <th class="text-right">Spare Cost</th><th class="text-right">Net Profit</th>
         <th class="text-right">GM%</th><th class="text-right">NM%</th>
       </tr></thead><tbody></tbody></table>
@@ -192,7 +193,7 @@ html = '''<!DOCTYPE html>
     <div class="table-wrap">
       <table id="serviceTable"><thead><tr>
         <th>Service Type</th><th class="text-right">Orders</th><th class="text-right">Net Revenue</th>
-        <th class="text-right">Spare Cost</th><th class="text-right">Labor Cost</th>
+        <th class="text-right">Spare Cost</th><th class="text-right">Consumable</th><th class="text-right">Labor Cost</th>
         <th class="text-right">Gross Profit</th><th class="text-right">Net Profit</th>
         <th class="text-right">GM%</th><th class="text-right">NM%</th>
       </tr></thead><tbody></tbody></table>
@@ -212,8 +213,9 @@ html = '''<!DOCTYPE html>
       <table id="expertTable"><thead><tr>
         <th>Expert Name</th><th class="text-right">Orders</th><th class="text-right">Net Revenue</th>
         <th class="text-right">Gross Profit</th><th class="text-right">Net Profit</th>
-        <th class="text-center">Rating</th><th class="text-center">On-Time %</th>
+        <th class="text-center">Rating</th><th class="text-center">Rated</th><th class="text-center">On-Time %</th>
         <th class="text-right">Avg TAT (hrs)</th>
+        <th class="text-right">FOC</th><th class="text-right">Actual</th><th class="text-center">FOC %</th>
       </tr></thead><tbody></tbody></table>
     </div>
   </div>
@@ -231,7 +233,8 @@ html = '''<!DOCTYPE html>
       <table id="tatTable"><thead><tr>
         <th>Expert Name</th><th class="text-center">Type</th><th class="text-right">Orders</th>
         <th class="text-right">Late</th><th class="text-right">On-Time</th><th class="text-center">Late %</th>
-        <th class="text-right">Avg Act Time (min)</th><th class="text-right">Avg TAT (hrs)</th>
+        <th class="text-right">Avg Est (min)</th><th class="text-right">Avg Act (min)</th>
+        <th class="text-right">TAT Viol %</th><th class="text-right">Avg TAT (hrs)</th>
       </tr></thead><tbody></tbody></table>
     </div>
   </div>
@@ -244,7 +247,7 @@ html = '''<!DOCTYPE html>
     <div class="table-wrap date-wise-table">
       <table id="datewiseTable"><thead><tr>
         <th>Day</th><th>Date</th><th class="text-right">Orders</th><th class="text-right">Net Revenue</th>
-        <th class="text-right">Gross Profit</th><th class="text-right">Labor Cost</th>
+        <th class="text-right">Gross Profit</th><th class="text-right">Consumable</th><th class="text-right">Labor Cost</th>
         <th class="text-right">Spare Cost</th><th class="text-right">Net Profit</th>
         <th class="text-right">GM%</th><th class="text-right">NM%</th>
       </tr></thead><tbody></tbody></table>
@@ -325,8 +328,7 @@ html = '''<!DOCTYPE html>
 // ============================================
 '''
 
-# Embed data - need to handle NaN properly for JS
-# Replace null back to NaN for JS compatibility
+# Embed data
 data_js_embedded = json.dumps(data, default=str).replace('null', 'NaN')
 html += f'const DASHBOARD_DATA = {data_js_embedded};\n'
 
@@ -338,7 +340,7 @@ html += '''
 const DATA = DASHBOARD_DATA;
 let currentView = 'Overall';
 let chartInstances = {};
-let activeFilters = { category: '', service: '', expert: '', weekend: '' };
+let activeFilters = { franchise: '', category: '', service: '', expert: '', weekend: '' };
 
 // ── Helpers ──
 const fmtINR = n => n == null || isNaN(n) ? '-' : '\u20b9' + (+n).toLocaleString('en-IN', {maximumFractionDigits:0});
@@ -356,11 +358,15 @@ function getCurrentData() {
 
 // ── Filter System ──
 function initFilters() {
+  const frSel = document.getElementById('filterFranchise');
   const catSel = document.getElementById('filterCategory');
   const svcSel = document.getElementById('filterService');
   const expSel = document.getElementById('filterExpert');
   const wkSel = document.getElementById('filterWeekend');
 
+  (DATA.filter_options?.franchises || []).forEach(c => {
+    const opt = document.createElement('option'); opt.value = c; opt.textContent = c; frSel.appendChild(opt);
+  });
   (DATA.filter_options?.categories || []).forEach(c => {
     const opt = document.createElement('option'); opt.value = c; opt.textContent = c; catSel.appendChild(opt);
   });
@@ -371,6 +377,7 @@ function initFilters() {
     const opt = document.createElement('option'); opt.value = e; opt.textContent = e; expSel.appendChild(opt);
   });
 
+  frSel.addEventListener('change', () => { activeFilters.franchise = frSel.value; frSel.classList.toggle('filter-active', !!frSel.value); renderAll(); });
   catSel.addEventListener('change', () => { activeFilters.category = catSel.value; catSel.classList.toggle('filter-active', !!catSel.value); renderAll(); });
   svcSel.addEventListener('change', () => { activeFilters.service = svcSel.value; svcSel.classList.toggle('filter-active', !!svcSel.value); renderAll(); });
   expSel.addEventListener('change', () => { activeFilters.expert = expSel.value; expSel.classList.toggle('filter-active', !!expSel.value); renderAll(); });
@@ -378,8 +385,8 @@ function initFilters() {
 }
 
 function clearFilters() {
-  activeFilters = { category: '', service: '', expert: '', weekend: '' };
-  ['filterCategory','filterService','filterExpert','filterWeekend'].forEach(id => {
+  activeFilters = { franchise: '', category: '', service: '', expert: '', weekend: '' };
+  ['filterFranchise','filterCategory','filterService','filterExpert','filterWeekend'].forEach(id => {
     const el = document.getElementById(id);
     el.value = ''; el.classList.remove('filter-active');
   });
@@ -387,9 +394,7 @@ function clearFilters() {
 }
 
 function matchesFilters(row, type) {
-  if (type === 'service' && activeFilters.category && row.Service_Type) {
-    // Service type filtering by category is approximate; skip for now
-  }
+  if (activeFilters.franchise && "Franchisee_Name" in row && row.Franchisee_Name !== activeFilters.franchise) return false;
   if (type === 'service' && activeFilters.service && row.Service_Type !== activeFilters.service) return false;
   if (type === 'expert' && activeFilters.expert && row.Expert_Name !== activeFilters.expert) return false;
   if (type === 'tat' && activeFilters.expert && row.Expert_Name !== activeFilters.expert) return false;
@@ -406,7 +411,6 @@ function initMonthSelector() {
     opt.textContent = m;
     select.appendChild(opt);
   });
-  // Default to latest month
   select.value = DATA.months[DATA.months.length - 1];
   currentView = select.value;
 
@@ -423,7 +427,6 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-    // Show/hide weekend filter
     document.getElementById('weekendFilterGroup').style.display = (tab.dataset.tab === 'operations') ? 'flex' : 'none';
   });
 });
@@ -446,6 +449,8 @@ function renderKPIs() {
     { label: 'Gross Profit', value: fmtINR(k.gross_profit), sub: fmtPct(k.gross_margin*100), cls: 'green' },
     { label: 'Labor Cost', value: fmtINR(k.labor_cost), sub: '', cls: 'orange' },
     { label: 'Spare Cost', value: fmtINR(k.spare_cost), sub: '', cls: 'orange' },
+    { label: 'Fuel Cost', value: fmtINR(k.fuel_cost), sub: '', cls: 'orange' },
+    { label: 'Consumable', value: fmtINR(k.consumable), sub: '', cls: 'orange' },
     { label: 'Net Profit', value: fmtINR(k.net_profit), sub: fmtPct(k.net_margin*100), cls: k.net_margin >= 0 ? 'green' : 'red' },
     { label: 'Gross Margin', value: fmtPct(k.gross_margin*100), sub: '', cls: 'purple' },
     { label: 'Net Margin', value: fmtPct(k.net_margin*100), sub: '', cls: 'purple' },
@@ -454,6 +459,9 @@ function renderKPIs() {
     { label: 'On-Time %', value: fmtPct(k.ontime_pct), sub: fmtRound(k.ontime_orders) + ' orders', cls: 'green' },
     { label: 'Avg Rating', value: k.avg_rating ? k.avg_rating.toFixed(1) : '-', sub: '/5.0', cls: k.avg_rating >= 4.5 ? 'green' : k.avg_rating >= 3.5 ? 'orange' : 'red' },
     { label: 'Avg TAT (hrs)', value: fmtHours(k.avg_tat_hours), sub: '', cls: 'purple' },
+    { label: 'FOC Orders', value: fmtRound(k.foc_orders), sub: 'Repeat/Reopened', cls: 'red' },
+    { label: 'Actual Orders', value: fmtRound(k.actual_orders), sub: 'Excl. FOC', cls: 'green' },
+    { label: 'FOC %', value: fmtPct(k.foc_pct), sub: 'of total', cls: k.foc_pct > 20 ? 'red' : 'orange' },
   ];
   document.getElementById('kpiGrid').innerHTML = items.map(i => `
     <div class="kpi-card ${i.cls}">
@@ -467,7 +475,7 @@ function renderKPIs() {
   document.querySelectorAll('.viewLabel').forEach(el => el.textContent = currentView);
 }
 
-// ── Monthly Trend Chart (always all months) ──
+// ── Monthly Trend Chart ──
 function renderMonthlyChart() {
   const d = DATA.monthly_trend;
   chartInstances.monthly = new Chart(document.getElementById('monthlyChart'), {
@@ -478,6 +486,7 @@ function renderMonthlyChart() {
         { label: 'Net Revenue', data: d.Net_Revenue, backgroundColor: '#3b82f6', borderRadius: 4 },
         { label: 'Gross Profit', data: d.Gross_Profit, backgroundColor: '#10b981', borderRadius: 4 },
         { label: 'Net Profit', data: d.Net_Profit, backgroundColor: '#8b5cf6', borderRadius: 4 },
+        { label: 'Consumable', data: d.Consumable, backgroundColor: '#f59e0b', borderRadius: 4 },
       ]
     },
     options: {
@@ -531,7 +540,7 @@ function renderDailyChart() {
   });
 }
 
-// ── Monthly Table (always all months) ──
+// ── Monthly Table ──
 function renderMonthlyTable() {
   const d = DATA.monthly_trend;
   const tbody = document.querySelector('#monthlyTable tbody');
@@ -542,6 +551,7 @@ function renderMonthlyTable() {
       <td class="text-right">${fmtRound(d.Orders[i])}</td>
       <td class="text-right">${fmtINR(d.Net_Revenue[i])}</td>
       <td class="text-right">${fmtINR(d.Gross_Profit[i])}</td>
+      <td class="text-right">${fmtINR(d.Consumable[i])}</td>
       <td class="text-right">${fmtINR(d.Labor_Cost[i])}</td>
       <td class="text-right">${fmtINR(d.Spare_Cost[i])}</td>
       <td class="text-right ${d.Net_Profit[i] >= 0 ? 'positive' : 'negative'}">${fmtINR(d.Net_Profit[i])}</td>
@@ -552,12 +562,13 @@ function renderMonthlyTable() {
   const totalOrders = d.Orders.reduce((a,b) => a+b, 0);
   const totalRev = d.Net_Revenue.reduce((a,b) => a+b, 0);
   const totalGP = d.Gross_Profit.reduce((a,b) => a+b, 0);
+  const totalCon = d.Consumable.reduce((a,b) => a+b, 0);
   const totalLC = d.Labor_Cost.reduce((a,b) => a+b, 0);
   const totalSC = d.Spare_Cost.reduce((a,b) => a+b, 0);
   const totalNP = d.Net_Profit.reduce((a,b) => a+b, 0);
   html += `<tr class="totals-row">
     <td>TOTAL</td><td class="text-right">${fmtRound(totalOrders)}</td><td class="text-right">${fmtINR(totalRev)}</td>
-    <td class="text-right">${fmtINR(totalGP)}</td><td class="text-right">${fmtINR(totalLC)}</td>
+    <td class="text-right">${fmtINR(totalGP)}</td><td class="text-right">${fmtINR(totalCon)}</td><td class="text-right">${fmtINR(totalLC)}</td>
     <td class="text-right">${fmtINR(totalSC)}</td><td class="text-right ${totalNP >= 0 ? 'positive' : 'negative'}">${fmtINR(totalNP)}</td>
     <td class="text-right">${fmtPct(totalGP/totalRev*100)}</td><td class="text-right">${fmtPct(totalNP/totalRev*100)}</td>
   </tr>`;
@@ -575,6 +586,7 @@ function renderServiceTable() {
       <td class="text-right">${fmtRound(r.Orders)}</td>
       <td class="text-right">${fmtINR(r.Net_Revenue)}</td>
       <td class="text-right">${fmtINR(r.Spare_Cost)}</td>
+      <td class="text-right">${fmtINR(r.Consumable || 0)}</td>
       <td class="text-right">${fmtINR(r.Labor_Cost)}</td>
       <td class="text-right ${r.Gross_Profit >= 0 ? 'positive' : 'negative'}">${fmtINR(r.Gross_Profit)}</td>
       <td class="text-right ${r.Net_Profit >= 0 ? 'positive' : 'negative'}">${fmtINR(r.Net_Profit)}</td>
@@ -610,8 +622,12 @@ function renderExpertTable() {
       <td class="text-right">${fmtINR(r.Gross_Profit)}</td>
       <td class="text-right ${r.Net_Profit >= 0 ? 'positive' : 'negative'}">${fmtINR(r.Net_Profit)}</td>
       <td class="text-center">${r.Avg_Rating ? r.Avg_Rating.toFixed(1) : '-'}</td>
+      <td class="text-center">${fmtRound(r.Rating_Count || 0)}</td>
       <td class="text-center"><span class="badge ${r.On_Time_pct >= 80 ? 'badge-green' : r.On_Time_pct >= 60 ? 'badge-orange' : 'badge-red'}">${fmtPct(r.On_Time_pct)}</span></td>
       <td class="text-right">${fmtHours(r.Avg_TAT_Hours)}</td>
+      <td class="text-right negative">${fmtRound(r.FOC_Orders || 0)}</td>
+      <td class="text-right positive">${fmtRound(r.Actual_Orders || 0)}</td>
+      <td class="text-center"><span class="badge ${(r.FOC_Pct || 0) > 20 ? 'badge-red' : (r.FOC_Pct || 0) > 10 ? 'badge-orange' : 'badge-green'}">${fmtPct(r.FOC_Pct)}</span></td>
     </tr>
   `).join('');
 }
@@ -648,7 +664,9 @@ function renderTATTable() {
       <td class="text-right negative">${fmtRound(r.Late)}</td>
       <td class="text-right positive">${fmtRound(r.On_Time)}</td>
       <td class="text-center"><span class="badge ${r.Late_pct <= 10 ? 'badge-green' : r.Late_pct <= 25 ? 'badge-orange' : 'badge-red'}">${fmtPct(r.Late_pct)}</span></td>
+      <td class="text-right">${fmtNum(r.Avg_Est_Time)}</td>
       <td class="text-right">${fmtNum(r.Avg_Act_Time)}</td>
+      <td class="text-right ${(r.Avg_TAT_Violation_pct || 0) > 0 ? 'negative' : 'positive'}">${fmtPct(r.Avg_TAT_Violation_pct)}</td>
       <td class="text-right">${fmtHours(r.Avg_TAT_Hours)}</td>
     </tr>
   `).join('');
@@ -659,7 +677,7 @@ function renderDatewiseTable() {
   const tbody = document.querySelector('#datewiseTable tbody');
   const rows = getCurrentData().date_wise_perf || [];
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="text-center" style="padding:30px;color:#6b7280">No data available</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="text-center" style="padding:30px;color:#6b7280">No data available</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(r => `
@@ -669,6 +687,7 @@ function renderDatewiseTable() {
       <td class="text-right">${fmtRound(r.Orders)}</td>
       <td class="text-right">${fmtINR(r.Net_Revenue)}</td>
       <td class="text-right">${fmtINR(r.Gross_Profit)}</td>
+      <td class="text-right">${fmtINR(r.Consumable || 0)}</td>
       <td class="text-right">${fmtINR(r.Labor_Cost)}</td>
       <td class="text-right">${fmtINR(r.Spare_Cost)}</td>
       <td class="text-right ${r.Net_Profit >= 0 ? 'positive' : 'negative'}">${fmtINR(r.Net_Profit)}</td>
@@ -836,6 +855,69 @@ function renderAll() {
   renderInsights();
 }
 
+// ── Export to Excel ──
+function exportToExcel() {
+  const view = getCurrentData();
+  const kpis = view.kpis || {};
+  const month = document.getElementById('monthSelector').value;
+  let csv = "Eazzy Services Dashboard Export\\n";
+  csv += "Period," + month + "\\n\\n";
+  csv += "KPI,Value\\n";
+  csv += "Total Orders," + (kpis.total_orders || 0) + "\\n";
+  csv += "Net Revenue,Rs" + (kpis.net_revenue || 0) + "\\n";
+  csv += "Gross Profit,Rs" + (kpis.gross_profit || 0) + "\\n";
+  csv += "Net Profit,Rs" + (kpis.net_profit || 0) + "\\n";
+  csv += "Spare Cost,Rs" + (kpis.spare_cost || 0) + "\\n";
+  csv += "Labor Cost,Rs" + (kpis.labor_cost || 0) + "\\n";
+  csv += "Consumable Cost,Rs" + (kpis.consumable || 0) + "\\n";
+  csv += "Fuel Cost,Rs" + (kpis.fuel_cost || 0) + "\\n";
+  csv += "Discount Given,Rs" + (kpis.discounts || 0) + "\\n";
+  csv += "Avg Order Value,Rs" + (kpis.avg_order_value || 0) + "\\n";
+  csv += "FOC Orders," + (kpis.foc_orders || 0) + "\\n";
+  csv += "FOC %," + (kpis.foc_pct || 0) + "%\\n";
+  csv += "On-Time %," + (kpis.ontime_pct || 0) + "%\\n";
+  csv += "Avg Rating," + (kpis.avg_rating || 0) + "\\n\\n";
+
+  const sp = view.service_pnl || [];
+  if (sp.length > 0) {
+    csv += "SERVICE-WISE P&L\\n";
+    csv += "Service,Orders,Net Revenue,Spare Cost,Consumable,Labor Cost,Gross Profit,Net Profit,GM%,NM%\\n";
+    sp.forEach(r => {
+      csv += [r.Service_Type, r.Orders, r.Net_Revenue, r.Spare_Cost||0, r.Consumable||0, r.Labor_Cost||0, r.Gross_Profit||0, r.Net_Profit||0, (r.GM_pct*100).toFixed(1)+'%', (r.NM_pct*100).toFixed(1)+'%'].join(",") + "\\n";
+    });
+    csv += "\\n";
+  }
+
+  const ek = view.expert_kpi || [];
+  if (ek.length > 0) {
+    csv += "EXPERT PERFORMANCE\\n";
+    csv += "Expert,Orders,Net Revenue,Gross Profit,Net Profit,Avg Rating,Rating Count,On-Time %,Avg TAT (hrs),FOC Orders,Actual Orders,FOC %\\n";
+    ek.forEach(r => {
+      csv += [r.Expert_Name, r.Orders, r.Net_Revenue||0, r.Gross_Profit||0, r.Net_Profit||0, r.Avg_Rating||0, r.Rating_Count||0, (r.On_Time_pct||0).toFixed(1)+'%', (r.Avg_TAT_Hours||0).toFixed(2), r.FOC_Orders||0, r.Actual_Orders||0, (r.FOC_Pct||0).toFixed(1)+'%'].join(",") + "\\n";
+    });
+    csv += "\\n";
+  }
+
+  const dw = view.date_wise_perf || [];
+  if (dw.length > 0) {
+    csv += "DATE-WISE PERFORMANCE\\n";
+    csv += "Day,Date,Orders,Net Revenue,Gross Profit,Consumable,Labor Cost,Spare Cost,Net Profit,GM%,NM%\\n";
+    dw.forEach(r => {
+      csv += [r.Day, r.Date, r.Orders, r.Net_Revenue||0, r.Gross_Profit||0, r.Consumable||0, r.Labor_Cost||0, r.Spare_Cost||0, r.Net_Profit||0, (r.GM_pct||0).toFixed(1)+'%', (r.NM_pct||0).toFixed(1)+'%'].join(",") + "\\n";
+    });
+  }
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'Eazzy_Dashboard_' + month + '_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // ── Init ──
 function init() {
   initMonthSelector();
@@ -858,4 +940,4 @@ print(f"   Size: {len(html):,} chars ({len(html)/1024:.1f} KB)")
 print(f"   Months: {months}")
 print(f"   Views: {list(views.keys())}")
 print(f"\n📤 Upload ONLY this file to GitHub Pages:")
-print(f"   C:\\Users\\saten\\Documents\\kimi\\workspace\\eazzy-dashboard-github\\index.html")
+print(r"   C:\Users\saten\Documents\kimi\workspace\eazzy-dashboard-github\index.html")
